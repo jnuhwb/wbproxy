@@ -17,10 +17,14 @@ send data to client sock
 #include <string.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
 
 //basic macro
 
 //def macro
+#define BUF_SIZE 8192
 
 //global variable
 char g_remote_host[128];
@@ -29,6 +33,8 @@ int g_remote_port;
 int g_server_port;
 
 int g_server_sock;
+int g_client_sock;
+int g_remote_sock;
 
 //func declare
 void start_server();
@@ -43,6 +49,7 @@ int forward_header(char *header, int dest_sock);
 int forward_data(int src_sock, int dest_sock);
 
 ssize_t read_sock_line(int sock, void *buffer, size_t n);
+int send_tunnel_ok(int client_sock);
 
 //func implement
 void start_server()
@@ -86,7 +93,7 @@ int create_server_sock()
 		return -1;
 	}
 
-	if (listen(server_sock, 10) < 0)
+	if (listen(server_sock, 100) < 0)
 	{
 		perror("listen server sock error");
 		return -1;
@@ -104,14 +111,19 @@ void server_loop()
 
 	while(1)
 	{
-		int client_sock =  accept(g_server_sock, (struct sockaddr*)&client_addr, &addrlen);
-        if (fork() == 0)
+		g_client_sock =  accept(g_server_sock, (struct sockaddr*)&client_addr, &addrlen);
+        pid_t fpid = fork();
+        if (fpid < 0)
+            perror("fork error\n");
+        else if (fpid == 0)
         {
+            printf("child process\n");
             close(g_server_sock);
-            handle_client(client_sock, client_addr);
+            handle_client(g_client_sock, client_addr);
             exit(0);
-        }
-        close(client_sock);
+        } else
+            printf("parent process\n");
+            close(g_client_sock);
 	}
 }
 
@@ -119,16 +131,21 @@ void handle_client(int client_sock, struct sockaddr_in client_addr)
 {
 	printf("handle_client\n");
 
+    int is_http_tunnel = 0;
     char host[128];
     memset(&host, 0, sizeof(host));
     
     int port = 0;
     
-    char header_buffer[BUFSIZ];
+    char header_buffer[BUF_SIZE];
     memset(&header_buffer, 0, sizeof(header_buffer));
     
     if (read_header(client_sock, header_buffer) < 0)
         return;
+    
+    char *p = strstr(header_buffer, "CONNECT");
+    if (p)
+        is_http_tunnel = 1;
     
     if (strlen(g_remote_host) == 0)
     {
@@ -140,22 +157,28 @@ void handle_client(int client_sock, struct sockaddr_in client_addr)
         port = g_remote_port;
     }
     
-	int remote_sock = create_remote_sock(host, port);
-    
+	if ((g_remote_sock = create_remote_sock(host, port)) < 0)
+        return;
+
     if (fork() == 0)
     {
-        forward_header(header_buffer, remote_sock);
-        forward_data(client_sock, remote_sock);
+//        if (!is_http_tunnel) {
+            forward_header(header_buffer, g_remote_sock);
+//        }
+        forward_data(g_client_sock, g_remote_sock);
         exit(0);
     }
-    
+
     if (fork() == 0) {
-        forward_data(remote_sock, client_sock);
+        if (is_http_tunnel) {
+//            send_tunnel_ok(g_client_sock);
+        }
+        forward_data(g_remote_sock, g_client_sock);
         exit(0);
     }
     
-    close(remote_sock);
-    close(client_sock);
+    close(g_remote_sock);
+    close(g_client_sock);
 }
 
 int read_header(int client_sock, char *buffer)
@@ -170,12 +193,9 @@ int read_header(int client_sock, char *buffer)
 		ssize_t total_read = read_sock_line(client_sock, &line_buffer, sizeof(line_buffer));
 		printf("%s", line_buffer);
 		if (total_read <= 0)
-		{
-			perror("client sock read header error");
 			return -1;
-		}
 
-		if (base_ptr + total_read - buffer < BUFSIZ)
+		if (base_ptr + total_read - buffer < BUF_SIZE)
 		{
 			strncpy(base_ptr, line_buffer, total_read);
 			base_ptr += total_read;
@@ -243,8 +263,8 @@ int create_remote_sock(char *host, int port)
     if ((remote_sock = socket(PF_INET, SOCK_STREAM, 0)) < 0)
         return -1;
     
-    if (setsockopt(remote_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
-        return -1;
+//    if (setsockopt(remote_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
+//        return -1;
     
     if ((server = gethostbyname(host)) == NULL)
         return -1;
@@ -262,6 +282,8 @@ int create_remote_sock(char *host, int port)
 
 void rewrite_header(char *header)
 {
+    printf("rewrite_header\n");
+    
     char * p = strstr(header,"http://");
     char * p0 = strchr(p,'\0');
     char * p5 = strstr(header,"HTTP/"); /* "HTTP/" 是协议标识 如 "HTTP/1.1" */
@@ -304,10 +326,10 @@ int forward_data(int src_sock, int dest_sock)
 {
 	printf("forward_data\n");
     
-    char buffer[BUFSIZ];
+    char buffer[BUF_SIZE];
     size_t read_size;
-    
-    while ((read_size = recv(src_sock, &buffer, BUFSIZ, 0)) > 0)
+
+    while ((read_size = recv(src_sock, buffer, BUF_SIZE, 0)) > 0)
     {
         send(dest_sock, buffer, read_size, 0);
     }
@@ -327,6 +349,7 @@ ssize_t read_sock_line(int sock, void *buffer, size_t n)
 
 	if (n <=0 || buffer == NULL)
 	{
+        errno = EINVAL;
 		return -1;
 	}
 
@@ -336,11 +359,19 @@ ssize_t read_sock_line(int sock, void *buffer, size_t n)
 	{
 		num_read = recv(sock, &ch, 1, 0);
 	
-		if (num_read <=0)
+		if (num_read == -1)
 		{
-			perror("read line error");
-			return -1;
-		} else
+            if (errno == EINTR)
+                continue;
+            else
+                return -1;
+		} else if (num_read == 0)
+        {
+            if (total_read == 0)
+                return 0;
+            else
+                return -1;
+        } else
 		{
 			if (total_read < n - 1)
 			{
@@ -355,6 +386,20 @@ ssize_t read_sock_line(int sock, void *buffer, size_t n)
 
 	*buf = '\0';
 	return total_read;
+}
+
+int send_tunnel_ok(int client_sock)
+{
+    char * resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    int len = strlen(resp);
+    char buffer[len+1];
+    strcpy(buffer,resp);
+    if(send(client_sock,buffer,len, 0) < 0)
+    {
+        perror("Send http tunnel response  failed\n");
+        return -1;
+    }
+    return 0;
 }
 
 //main
