@@ -11,7 +11,7 @@ int main()
 	memset(&remote_addr, 0, sizeof(remote_addr));
 	remote_addr.sin_family = AF_INET;
 	remote_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	remote_addr.sin_port = htons(5555);
+	remote_addr.sin_port = htons(9000);
 
 	if ((client_sockfd = socket(PF_INET, SOCK_STREAM, 0)) < 0)
 	{
