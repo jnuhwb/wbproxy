@@ -1,3 +1,5 @@
+#include <stdarg.h>
+#include <time.h>
 #include <signal.h>
 #include <netdb.h>
 #include <errno.h>
@@ -13,10 +15,56 @@
 #define MAX_HEADER_SIZE (8192)
 #define BUF_SIZE (8192)
 #define MAX_HOST_SIZE (128)
+#define MAX_PATH_SIZE (128)
 
 int localPort;
 int serverPort;
 char serverHost[MAX_HOST_SIZE];
+
+char accessDir[MAX_PATH_SIZE];
+char logDir[MAX_PATH_SIZE];
+
+void wblog(char *s) {
+    if (!strlen(logDir)) {
+        printf("no log dir\n");
+        return;
+    }
+
+    char day[128];
+    char daytime[128];
+    time_t now;
+    struct tm *ti;
+    
+    time(&now);
+    ti = localtime(&now);
+    strftime(day, 128, "%Y-%m-%d", ti);
+    strftime(daytime, 128, "%Y-%m-%d %H:%M:%S", ti);
+
+    strcat(logDir, day);
+    strcat(logDir, ".log");
+
+    FILE *f = fopen(logDir, "ab+");
+    if (!f) {
+        printf("open log file error\n");
+        return;
+    }
+
+    fprintf(f, "[%s]%s\n", daytime, s);
+    printf("[%s]%s\n", daytime, s);
+    fclose(f);
+}
+
+void wblogf(char *format, ...) {
+    char buf[1024];
+    memset(&buf, 0, 256);
+
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, 1024, format, args);
+    va_end(args);
+
+    wblog(buf);
+}
 
 void transpond(int fromSd, int toSd) {
     char buf[BUF_SIZE];
@@ -35,10 +83,13 @@ void transpond(int fromSd, int toSd) {
     }
 }
 
-void extractHostPort(char *header, char *host, int *port) {
+void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
     if (!header) {
         exit(-1);
     }
+
+    char *tunnel = strstr(header, "CONNECT");
+    *isTunnel = tunnel != NULL ? 1 : 0;
 
     char *start = strstr(header, "Host:");
     if (!start) {
@@ -61,7 +112,11 @@ void extractHostPort(char *header, char *host, int *port) {
         strncpy(host, start, len);
         host[len] = '\0';
 
-        *port = 80;
+        if (isTunnel) {
+            *port = 443; 
+        } else {
+            *port = 80;
+        }
     } else {
         int len = colon - start;
         strncpy(host, start, len);
@@ -74,7 +129,7 @@ void extractHostPort(char *header, char *host, int *port) {
         tmpPort[len] = '\0';
         *port = atoi(tmpPort);
     }
-    printf("extract host ok %s %d\n", host, *port);
+    printf("extract host ok %s %d %d\n", host, *port, *isTunnel);
 }
 
 int createConnection(char *host, int port) {
@@ -141,6 +196,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     printf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
 
     printf("create connection to server\n");
+    int isTunnel;
     char header[MAX_HEADER_SIZE];
     int serverSd;
     if (serverPort) {
@@ -155,7 +211,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
 
         char host[MAX_HOST_SIZE];
         int port;
-        extractHostPort(header, host, &port);
+        extractHostPort(header, host, &port, &isTunnel);
         
         serverSd = createConnection(host, port);
 
@@ -165,11 +221,21 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         }
     }
 
+    if (isTunnel) {
+        printf("send tunnel established\n");
+        char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
+        int cnt;
+        if ((cnt = send(clientSd, respond, strlen(respond), 0)) < 0) {
+            printf("send tunnel establish error\n");
+            exit(-1);   
+        }
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
         exit(-1);
     } else if (0 == pid) {
-        if (strlen(header)) {
+        if (strlen(header) && !isTunnel) {
             printf("send header\n");
             send(serverSd, header, strlen(header), 0);
         }
@@ -245,20 +311,21 @@ void sigchld_handler() {
 void usage() {
     printf("Usage:\n");
     printf(" -d run as daemon\n");
-    printf(" -l local port\n");
+    printf(" -p local port\n");
     printf(" -h remote host and port, default port is 80, such as example.com:9000\n");
+    printf(" -l log directory\n");
 }
 
 int main(int argc, char *argv[]) {
 	int opt;
     bool daemon = false;
     char *ch = NULL;
-	while ((opt = getopt(argc, argv, ":dl:h:")) != -1) {
+	while ((opt = getopt(argc, argv, ":dp:h:l:")) != -1) {
 		switch (opt) {
 			case 'd':
                 daemon = true;
 				break;
-			case 'l':
+			case 'p':
                 localPort = atoi(optarg);
                 break;
             case 'h':
@@ -270,6 +337,10 @@ int main(int argc, char *argv[]) {
                     strcpy(serverHost, optarg);
                     serverPort = 80;
                 }
+                break;
+            case 'l':
+                memset(&logDir, 0, MAX_PATH_SIZE);
+                strcpy(logDir, optarg);
                 break;
                 
             default:
@@ -283,7 +354,6 @@ int main(int argc, char *argv[]) {
         usage();
         exit(1);
     }
-
 
     //signal for child process
     signal(SIGCHLD, sigchld_handler);   
