@@ -20,16 +20,12 @@
 int localPort;
 int serverPort;
 char serverHost[MAX_HOST_SIZE];
+int isCapture;
+char capturePath[MAX_PATH_SIZE];
 
-char accessDir[MAX_PATH_SIZE];
 char logDir[MAX_PATH_SIZE];
 
 void wblog(char *s) {
-    if (!strlen(logDir)) {
-        printf("no log dir\n");
-        return;
-    }
-
     char day[128];
     char daytime[128];
     time_t now;
@@ -40,30 +36,64 @@ void wblog(char *s) {
     strftime(day, 128, "%Y-%m-%d", ti);
     strftime(daytime, 128, "%Y-%m-%d %H:%M:%S", ti);
 
-    strcat(logDir, day);
-    strcat(logDir, ".log");
+    if (strlen(logDir)) {
+        char logPath[MAX_PATH_SIZE];
+        memset(&logPath, 0, MAX_PATH_SIZE);
+        strcat(logPath, logDir);
+        strcat(logPath, day);
+        strcat(logPath, ".log");
 
-    FILE *f = fopen(logDir, "ab+");
-    if (!f) {
-        printf("open log file error\n");
-        return;
+        FILE *f = fopen(logPath, "ab+");
+        if (!f) {
+            printf("open log file error\n");
+            return;
+        }
+
+        fprintf(f, "[%s] %s\n", daytime, s);
+        fflush(f);
+        fclose(f);
     }
 
-    fprintf(f, "[%s]%s\n", daytime, s);
-    printf("[%s]%s\n", daytime, s);
-    fclose(f);
+    printf("[LOG]%s %s\n", daytime, s);
 }
 
 void wblogf(char *format, ...) {
-    char buf[1024];
-    memset(&buf, 0, 256);
+    char buf[BUF_SIZE];
+    memset(&buf, 0, BUF_SIZE);
 
     va_list args;
     va_start(args, format);
-    vsnprintf(buf, 1024, format, args);
+    vsnprintf(buf, BUF_SIZE, format, args);
     va_end(args);
 
     wblog(buf);
+}
+
+void capture(char *format, ...) {
+    if (!isCapture && !strlen(capturePath)) return;
+
+    char buf[BUF_SIZE];
+    memset(&buf, 0, BUF_SIZE);
+
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, BUF_SIZE, format, args);
+    va_end(args);
+
+    if (strlen(capturePath)) {
+        FILE *f = fopen(capturePath, "a+");
+        if (!f) {
+            printf("open capture file error\n");
+            return;
+        }
+        fprintf(f, "%s", buf);
+        fflush(f);
+        fclose(f);
+    } else {
+        printf("[CAPTURE START]\n");
+        printf("%s", buf);
+        printf("[CAPTURE END]\n");
+    }
 }
 
 void transpond(int fromSd, int toSd) {
@@ -72,7 +102,8 @@ void transpond(int fromSd, int toSd) {
     while (1) {
         cnt = recv(fromSd, buf, BUF_SIZE, 0);
         if (cnt > 0) {
-            printf("from %d recv:%s\n", fromSd, buf);
+            wblogf("from %d recv:%s\n", fromSd, buf);
+            capture(buf);
             send(toSd, buf, cnt, 0);
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
@@ -129,7 +160,7 @@ void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
         tmpPort[len] = '\0';
         *port = atoi(tmpPort);
     }
-    printf("extract host ok %s %d %d\n", host, *port, *isTunnel);
+    wblogf("extract host ok %s %d %d\n", host, *port, *isTunnel);
 }
 
 int createConnection(char *host, int port) {
@@ -139,7 +170,7 @@ int createConnection(char *host, int port) {
 
     struct hostent *ht = gethostbyname(host);
     if (!ht) {
-        printf("gethostbyname error\n");
+        wblogf("gethostbyname error\n");
         exit(-1);
     }
 
@@ -168,7 +199,7 @@ void readHeader(int sd, char *header, int size) {
     char *p = header;
     while (1) {
         if (p - header > size) {
-            printf("readHeader outof size\n");
+            wblogf("readHeader outof size\n");
             exit(-1);
         }
         
@@ -185,17 +216,17 @@ void readHeader(int sd, char *header, int size) {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
             }
-            printf("readHeader %d\n", cnt);
+            wblogf("readHeader %d\n", cnt);
             exit(-1);
         }
     }
-    printf("readHeader ok:\n%s\n", header);
+    wblogf("readHeader ok:\n%s\n", header);
 }
 
 void handleClient(int clientSd, struct sockaddr_in addr) {
-    printf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
+    wblogf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
 
-    printf("create connection to server\n");
+    wblogf("create connection to server\n");
     int isTunnel;
     char header[MAX_HEADER_SIZE];
     int serverSd;
@@ -203,7 +234,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         serverSd = createConnection(serverHost, serverPort);
         
         if (serverSd < 0) {
-            printf("create error\n");   
+            wblogf("create error\n");   
             exit(-1);
         }
     } else {
@@ -216,17 +247,17 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         serverSd = createConnection(host, port);
 
         if (serverSd < 0) {
-            printf("create error\n");   
+            wblogf("create error\n");   
             exit(-1);
         }
     }
 
     if (isTunnel) {
-        printf("send tunnel established\n");
+        wblogf("send tunnel established\n");
         char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
         int cnt;
         if ((cnt = send(clientSd, respond, strlen(respond), 0)) < 0) {
-            printf("send tunnel establish error\n");
+            wblogf("send tunnel establish error\n");
             exit(-1);   
         }
     }
@@ -236,18 +267,19 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         exit(-1);
     } else if (0 == pid) {
         if (strlen(header) && !isTunnel) {
-            printf("send header\n");
+            wblogf("send header\n");
+            capture(header);
             send(serverSd, header, strlen(header), 0);
         }
-        printf("child transpond c to s\n");
+        wblogf("child transpond c to s\n");
         transpond(clientSd, serverSd);   
-        printf("client socket closed, kill parent process to close server socket\n");
+        wblogf("client socket closed, kill parent process to close server socket\n");
         kill(getppid(), SIGKILL);
         exit(0);
     } else {
-        printf("parent transpond s to c\n");
+        wblogf("parent transpond s to c\n");
         transpond(serverSd, clientSd);
-        printf("server socket closed, kill child process to close client socket\n");
+        wblogf("server socket closed, kill child process to close client socket\n");
         kill(pid, SIGKILL);
     }
 }
@@ -257,13 +289,13 @@ void start() {
     struct sockaddr_in addr;
 
     if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        printf("socket() error\n");
+        wblogf("socket() error\n");
         exit(1);
     }
 
     int opt;
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        printf("setsockopt error\n");
+        wblogf("setsockopt error\n");
         exit(1);
     }
 
@@ -273,16 +305,16 @@ void start() {
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        printf("bind error\n");
+        wblogf("bind error\n");
         exit(1);
     }
 
     if (listen(sd, 20) != 0) {
-        printf("listen error\n");
+        wblogf("listen error\n");
         exit(1);
     }
     
-    printf("server started\n");
+    wblogf("server started\n");
     int len;
     while (1) {
         struct sockaddr_in clientAddr;
@@ -291,7 +323,7 @@ void start() {
 
         pid_t pid = fork();
         if (pid < 0) {
-            printf("fork error\n");
+            wblogf("fork error\n");
             exit(1);
         } else if (0 == pid) {
             close(sd);
@@ -314,13 +346,15 @@ void usage() {
     printf(" -p local port\n");
     printf(" -h remote host and port, default port is 80, such as example.com:9000\n");
     printf(" -l log directory\n");
+    printf(" -c capture http data\n");
+    printf(" -w capture redirect to file\n");
 }
 
 int main(int argc, char *argv[]) {
 	int opt;
     bool daemon = false;
     char *ch = NULL;
-	while ((opt = getopt(argc, argv, ":dp:h:l:")) != -1) {
+	while ((opt = getopt(argc, argv, ":dcw:p:h:l:")) != -1) {
 		switch (opt) {
 			case 'd':
                 daemon = true;
@@ -341,6 +375,15 @@ int main(int argc, char *argv[]) {
             case 'l':
                 memset(&logDir, 0, MAX_PATH_SIZE);
                 strcpy(logDir, optarg);
+                break;
+            case 'c':
+                isCapture = 1;
+                printf("c\n");
+                break;
+            case 'w':
+                memset(&capturePath, 0, MAX_PATH_SIZE);
+                strcpy(capturePath, optarg);
+                printf("path==%s\n", capturePath);
                 break;
                 
             default:
