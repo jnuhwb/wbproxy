@@ -35,6 +35,7 @@ endirection endir;
 
 char logDir[MAX_PATH_SIZE];
 
+void wblogf(char *format, ...);
 
 void printBits(size_t const size, void const * const ptr)
 {
@@ -80,7 +81,7 @@ ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
         int cnt;
         cnt = recv(socket, buffer, length, flags);       
         char *enMsg = wbxor((char *)buffer, enKey);
-        memset(&buffer, 0, length);
+        memset(buffer, 0, length);
         memcpy(buffer, enMsg, strlen(enMsg));
         free(enMsg);
         return cnt;
@@ -102,7 +103,7 @@ void wblog(char *s) {
 
     if (strlen(logDir)) {
         char logPath[MAX_PATH_SIZE];
-        memset(&logPath, 0, MAX_PATH_SIZE);
+        memset(logPath, 0, MAX_PATH_SIZE);
         strcat(logPath, logDir);
         strcat(logPath, day);
         strcat(logPath, ".log");
@@ -123,7 +124,7 @@ void wblog(char *s) {
 
 void wblogf(char *format, ...) {
     char buf[BUF_SIZE];
-    memset(&buf, 0, BUF_SIZE);
+    memset(buf, 0, BUF_SIZE);
 
     va_list args;
     va_start(args, format);
@@ -137,7 +138,7 @@ void capture(char *format, ...) {
     if (!isCapture && !strlen(capturePath)) return;
 
     char buf[BUF_SIZE];
-    memset(&buf, 0, BUF_SIZE);
+    memset(buf, 0, BUF_SIZE);
 
     va_list args;
     va_start(args, format);
@@ -166,9 +167,10 @@ void transpond(int fromSd, int toSd) {
     while (1) {
         cnt = wbrecv(fromSd, buf, BUF_SIZE, 0);
         if (cnt > 0) {
+            wbsend(toSd, buf, cnt, 0);
+            buf[cnt] = '\0';
             wblogf("from %d recv: cnt=%d %s\n", fromSd,  cnt, buf);
             capture(buf);
-            wbsend(toSd, buf, cnt, 0);
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
@@ -301,7 +303,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
 
     int isTunnel;
     char header[MAX_HEADER_SIZE];
-    memset(&header, 0, MAX_HEADER_SIZE);
+    memset(header, 0, MAX_HEADER_SIZE);
     int serverSd;
     if (serverPort) {
         wblogf("create connection to my server\n");
@@ -312,6 +314,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             exit(-1);
         }
     } else {
+        wblogf("begin read header");
         readHeader(clientSd, header, MAX_HEADER_SIZE);
 
         char host[MAX_HOST_SIZE];
@@ -348,7 +351,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             endir = to;
         }
         
-        wblogf("parent transpond s to c\n");
+        wblogf("transpond s to c\n");
         transpond(serverSd, clientSd);
         wblogf("client socket closed, kill parent process to close server socket\n");
         kill(getppid(), SIGKILL);
@@ -359,7 +362,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             capture(header);
             wbsend(serverSd, header, strlen(header), 0);
         }
-        wblogf("child transpond c to s\n");
+        wblogf("transpond c to s\n");
         transpond(clientSd, serverSd);   
         wblogf("server socket closed, kill child process to close client socket\n");
         kill(pid, SIGKILL);
@@ -414,7 +417,6 @@ void start() {
         } else {
             close(clientSd);
         }
-       
     }
 }
 
@@ -455,14 +457,14 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 'l':
-                memset(&logDir, 0, MAX_PATH_SIZE);
+                memset(logDir, 0, MAX_PATH_SIZE);
                 strcpy(logDir, optarg);
                 break;
             case 'c':
                 isCapture = 1;
                 break;
             case 'w':
-                memset(&capturePath, 0, MAX_PATH_SIZE);
+                memset(capturePath, 0, MAX_PATH_SIZE);
                 strcpy(capturePath, optarg);
                 break;
             case 'e':
