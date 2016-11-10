@@ -12,10 +12,17 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+typedef enum endirection {
+    to,
+    from
+} endirection;
+
 #define MAX_HEADER_SIZE (8192)
 #define BUF_SIZE (8192)
 #define MAX_HOST_SIZE (128)
 #define MAX_PATH_SIZE (128)
+
+const char *enKey = "iuerjkd";
 
 int localPort;
 int serverPort;
@@ -23,7 +30,46 @@ char serverHost[MAX_HOST_SIZE];
 int isCapture;
 char capturePath[MAX_PATH_SIZE];
 
+int isEncrypt;
+endirection endir;
+
 char logDir[MAX_PATH_SIZE];
+
+char * wbencrypt(char *msg, const char *key) {
+    int len = strlen(msg);
+    int keyLen = strlen(key);
+    char *enMsg = malloc(len);
+    for (int i = 0; i < len; i++) {
+        enMsg[i] = msg[i] ^ key[i % keyLen];
+    }
+    return enMsg;
+}
+
+ssize_t wbsend(int socket, const void *buffer, size_t length, int flags) {
+    if (isEncrypt && to == endir) {
+        char *enMsg = wbencrypt((char *)buffer, enKey);
+        int cnt;
+        cnt = send(socket, enMsg, strlen(enMsg), flags);
+        free(enMsg);
+        return cnt;
+    } else {
+        return send(socket, buffer, length, flags);
+    }
+}
+
+ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
+    if (isEncrypt && from == endir) {
+        int cnt;
+        cnt = recv(socket, buffer, length, flags);       
+        char *enMsg = wbencrypt((char *)buffer, enKey);
+        memset(&buffer, 0, length);
+        memcpy(buffer, enMsg, strlen(enMsg));
+        free(enMsg);
+        return cnt;
+    } else {
+        return recv(socket, buffer, length, flags);
+    }
+}
 
 void wblog(char *s) {
     char day[128];
@@ -90,7 +136,7 @@ void capture(char *format, ...) {
         fflush(f);
         fclose(f);
     } else {
-        printf("[CAPTURE START]\n");
+        printf("\n[CAPTURE START]\n");
         printf("%s", buf);
         printf("[CAPTURE END]\n");
     }
@@ -100,11 +146,11 @@ void transpond(int fromSd, int toSd) {
     char buf[BUF_SIZE];
     int cnt;
     while (1) {
-        cnt = recv(fromSd, buf, BUF_SIZE, 0);
+        cnt = wbrecv(fromSd, buf, BUF_SIZE, 0);
         if (cnt > 0) {
-            wblogf("from %d recv:%s\n", fromSd, buf);
+            wblogf("from %d recv: cnt=%d %s\n", fromSd,  cnt, buf);
             capture(buf);
-            send(toSd, buf, cnt, 0);
+            wbsend(toSd, buf, cnt, 0);
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
@@ -143,9 +189,12 @@ void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
         strncpy(host, start, len);
         host[len] = '\0';
 
-        if (isTunnel) {
+        wblogf("===isTunnel=%d\n", *isTunnel);
+        if (*isTunnel) {
+            wblogf("===443===");
             *port = 443; 
         } else {
+            wblogf("===80===");
             *port = 80;
         }
     } else {
@@ -266,10 +315,16 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     if (pid < 0) {
         exit(-1);
     } else if (0 == pid) {
+        if (serverPort) {
+            endir = from;
+        } else {
+            endir = to;
+        }
+        
         if (strlen(header) && !isTunnel) {
             wblogf("send header\n");
             capture(header);
-            send(serverSd, header, strlen(header), 0);
+            wbsend(serverSd, header, strlen(header), 0);
         }
         wblogf("child transpond c to s\n");
         transpond(clientSd, serverSd);   
@@ -277,6 +332,12 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         kill(getppid(), SIGKILL);
         exit(0);
     } else {
+        if (serverPort) {
+            endir = to;
+        } else {
+            endir = from;
+        }
+
         wblogf("parent transpond s to c\n");
         transpond(serverSd, clientSd);
         wblogf("server socket closed, kill child process to close client socket\n");
@@ -354,7 +415,7 @@ int main(int argc, char *argv[]) {
 	int opt;
     bool daemon = false;
     char *ch = NULL;
-	while ((opt = getopt(argc, argv, ":dcw:p:h:l:")) != -1) {
+	while ((opt = getopt(argc, argv, ":dcew:p:h:l:")) != -1) {
 		switch (opt) {
 			case 'd':
                 daemon = true;
@@ -378,12 +439,13 @@ int main(int argc, char *argv[]) {
                 break;
             case 'c':
                 isCapture = 1;
-                printf("c\n");
                 break;
             case 'w':
                 memset(&capturePath, 0, MAX_PATH_SIZE);
                 strcpy(capturePath, optarg);
-                printf("path==%s\n", capturePath);
+                break;
+            case 'e':
+                isEncrypt = 1;
                 break;
                 
             default:
