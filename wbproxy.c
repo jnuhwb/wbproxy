@@ -22,7 +22,7 @@ typedef enum endirection {
 #define MAX_HOST_SIZE (128)
 #define MAX_PATH_SIZE (128)
 
-const char *enKey = "1";
+char enKey[] = "h";
 
 int localPort;
 int serverPort;
@@ -53,23 +53,22 @@ void printBits(size_t const size, void const * const ptr)
                                                                         }
                                                                             puts("");
                                                                             }
-char * wbxor(char *msg, const char *key) {
-    int len = strlen(msg);
+void wbxor(const void *msg, size_t len, void *dst, size_t dstLen, const char *key) {
     int keyLen = strlen(key);
-    char *enMsg = malloc(len);
     int i;
-    for (i = 0; i < len; i++) {
-        enMsg[i] = msg[i] ^ key[i % keyLen];
+    int minLen = len - dstLen > 0 ? dstLen : len;
+    for (i = 0; i < minLen; i++) {
+        char ch = key[i % keyLen];
+        ((char *)dst)[i] = ((char *)msg)[i] ^ ch;
     }
-    return enMsg;
 }
 
 ssize_t wbsend(int socket, const void *buffer, size_t length, int flags) {
     if (isEncrypt && to == endir) {
-        char *enMsg = wbxor((char *)buffer, enKey);
-        int cnt;
-        cnt = send(socket, enMsg, strlen(enMsg), flags);
-        free(enMsg);
+        void *p = malloc(length);
+        wbxor(buffer, length, p, length, enKey);
+        int cnt = send(socket, p, length, flags);
+        free(p);
         return cnt;
     } else {
         return send(socket, buffer, length, flags);
@@ -80,10 +79,13 @@ ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
     if (isEncrypt && from == endir) {
         int cnt;
         cnt = recv(socket, buffer, length, flags);       
-        char *enMsg = wbxor((char *)buffer, enKey);
-        memset(buffer, 0, length);
-        memcpy(buffer, enMsg, strlen(enMsg));
-        free(enMsg);
+
+        void *p = malloc(cnt);
+        wbxor(buffer, cnt, p, cnt, enKey);
+
+        memset(buffer, 0, cnt);
+        memcpy(buffer, p, cnt);
+        free(p);
         return cnt;
     } else {
         return recv(socket, buffer, length, flags);
@@ -165,6 +167,7 @@ void transpond(int fromSd, int toSd) {
     char buf[BUF_SIZE];
     int cnt;
     while (1) {
+        memset(buf, 0, BUF_SIZE);
         cnt = wbrecv(fromSd, buf, BUF_SIZE, 0);
         if (cnt > 0) {
             wbsend(toSd, buf, cnt, 0);
@@ -283,6 +286,7 @@ void readHeader(int sd, char *header, int size) {
             p++;
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
+                wblogf("???????");
                 continue;
             }
             wblogf("readHeader %d\n", cnt);
@@ -331,16 +335,6 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     }
     wblogf("created server connection:%d", serverSd);
 
-    if (isTunnel) {
-        wblogf("send tunnel established\n");
-        char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
-        int cnt;
-        if ((cnt = wbsend(clientSd, respond, strlen(respond), 0)) < 0) {
-            wblogf("send tunnel establish error\n");
-            exit(-1);   
-        }
-    }
-
     pid_t pid = fork();
     if (pid < 0) {
         exit(-1);
@@ -349,6 +343,16 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             endir = from;
         } else {
             endir = to;
+        }
+
+        if (isTunnel) {
+            wblogf("send tunnel established\n");
+            char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
+            int cnt;
+            if ((cnt = wbsend(clientSd, respond, strlen(respond), 0)) < 0) {
+                wblogf("send tunnel establish error\n");
+                exit(-1);   
+            }
         }
         
         wblogf("transpond s to c\n");
