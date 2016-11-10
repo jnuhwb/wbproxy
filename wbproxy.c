@@ -276,17 +276,17 @@ void readHeader(int sd, char *header, int size) {
 void handleClient(int clientSd, struct sockaddr_in addr) {
     wblogf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
 
-    wblogf("create connection to server\n");
     if (serverPort) {
-        endir = to;
-    } else {
         endir = from;
+    } else {
+        endir = to;
     }
 
     int isTunnel;
     char header[MAX_HEADER_SIZE];
     int serverSd;
     if (serverPort) {
+        wblogf("create connection to my server\n");
         serverSd = createConnection(serverHost, serverPort);
         
         if (serverSd < 0) {
@@ -294,12 +294,14 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             exit(-1);
         }
     } else {
+        memset(&header, 0, MAX_HEADER_SIZE);
         readHeader(clientSd, header, MAX_HEADER_SIZE);
 
         char host[MAX_HOST_SIZE];
         int port;
         extractHostPort(header, host, &port, &isTunnel);
         
+        wblogf("create connection to web server\n");
         serverSd = createConnection(host, port);
 
         if (serverSd < 0) {
@@ -312,7 +314,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         wblogf("send tunnel established\n");
         char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
         int cnt;
-        if ((cnt = send(clientSd, respond, strlen(respond), 0)) < 0) {
+        if ((cnt = wbsend(clientSd, respond, strlen(respond), 0)) < 0) {
             wblogf("send tunnel establish error\n");
             exit(-1);   
         }
@@ -323,9 +325,9 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         exit(-1);
     } else if (0 == pid) {
         if (serverPort) {
-            endir = from;
-        } else {
             endir = to;
+        } else {
+            endir = from;
         }
         
         if (strlen(header) && !isTunnel) {
