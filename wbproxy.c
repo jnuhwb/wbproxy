@@ -277,9 +277,9 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     wblogf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
 
     if (serverPort) {
-        endir = from;
-    } else {
         endir = to;
+    } else {
+        endir = from;
     }
 
     int isTunnel;
@@ -325,11 +325,17 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         exit(-1);
     } else if (0 == pid) {
         if (serverPort) {
-            endir = to;
-        } else {
             endir = from;
+        } else {
+            endir = to;
         }
         
+        wblogf("parent transpond s to c\n");
+        transpond(serverSd, clientSd);
+        wblogf("client socket closed, kill parent process to close server socket\n");
+        kill(getppid(), SIGKILL);
+        exit(0);
+    } else {
         if (strlen(header) && !isTunnel) {
             wblogf("send header\n");
             capture(header);
@@ -337,12 +343,6 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         }
         wblogf("child transpond c to s\n");
         transpond(clientSd, serverSd);   
-        wblogf("client socket closed, kill parent process to close server socket\n");
-        kill(getppid(), SIGKILL);
-        exit(0);
-    } else {
-        wblogf("parent transpond s to c\n");
-        transpond(serverSd, clientSd);
         wblogf("server socket closed, kill child process to close client socket\n");
         kill(pid, SIGKILL);
     }
