@@ -22,7 +22,7 @@ typedef enum endirection {
 #define MAX_HOST_SIZE (128)
 #define MAX_PATH_SIZE (128)
 
-const char *enKey = "iuerjkd";
+const char *enKey = "1";
 
 int localPort;
 int serverPort;
@@ -35,12 +35,30 @@ endirection endir;
 
 char logDir[MAX_PATH_SIZE];
 
-char * wbencrypt(char *msg, const char *key) {
+
+void printBits(size_t const size, void const * const ptr)
+{
+    unsigned char *b = (unsigned char*) ptr;
+        unsigned char byte;
+            int i, j;
+
+                for (i=size-1;i>=0;i--)
+                    {
+                            for (j=7;j>=0;j--)
+                                    {
+                                                byte = (b[i] >> j) & 1;
+                                                            printf("%u", byte);
+                                                                    }
+                                                                        }
+                                                                            puts("");
+                                                                            }
+char * wbxor(char *msg, const char *key) {
     int len = strlen(msg);
     int keyLen = strlen(key);
     char *enMsg = malloc(len);
     int i;
     for (i = 0; i < len; i++) {
+        printBits(sizeof(char), &key[i % keyLen]);
         enMsg[i] = msg[i] ^ key[i % keyLen];
     }
     return enMsg;
@@ -48,7 +66,7 @@ char * wbencrypt(char *msg, const char *key) {
 
 ssize_t wbsend(int socket, const void *buffer, size_t length, int flags) {
     if (isEncrypt && to == endir) {
-        char *enMsg = wbencrypt((char *)buffer, enKey);
+        char *enMsg = wbxor((char *)buffer, enKey);
         int cnt;
         cnt = send(socket, enMsg, strlen(enMsg), flags);
         free(enMsg);
@@ -62,7 +80,7 @@ ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
     if (isEncrypt && from == endir) {
         int cnt;
         cnt = recv(socket, buffer, length, flags);       
-        char *enMsg = wbencrypt((char *)buffer, enKey);
+        char *enMsg = wbxor((char *)buffer, enKey);
         memset(&buffer, 0, length);
         memcpy(buffer, enMsg, strlen(enMsg));
         free(enMsg);
@@ -101,7 +119,7 @@ void wblog(char *s) {
         fclose(f);
     }
 
-    printf("[LOG]%s %s\n", daytime, s);
+    printf("[LOG][process:%d]%s %s\n", getpid(), daytime, s);
 }
 
 void wblogf(char *format, ...) {
