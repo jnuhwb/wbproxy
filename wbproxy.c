@@ -58,7 +58,6 @@ char * wbxor(char *msg, const char *key) {
     char *enMsg = malloc(len);
     int i;
     for (i = 0; i < len; i++) {
-        printBits(sizeof(char), &key[i % keyLen]);
         enMsg[i] = msg[i] ^ key[i % keyLen];
     }
     return enMsg;
@@ -292,7 +291,7 @@ void readHeader(int sd, char *header, int size) {
 }
 
 void handleClient(int clientSd, struct sockaddr_in addr) {
-    wblogf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
+    wblogf("client:%d, %s, %d\n", clientSd, inet_ntoa(addr.sin_addr), addr.sin_port); 
 
     if (serverPort) {
         endir = to;
@@ -302,6 +301,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
 
     int isTunnel;
     char header[MAX_HEADER_SIZE];
+    memset(&header, 0, MAX_HEADER_SIZE);
     int serverSd;
     if (serverPort) {
         wblogf("create connection to my server\n");
@@ -312,7 +312,6 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             exit(-1);
         }
     } else {
-        memset(&header, 0, MAX_HEADER_SIZE);
         readHeader(clientSd, header, MAX_HEADER_SIZE);
 
         char host[MAX_HOST_SIZE];
@@ -327,6 +326,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
             exit(-1);
         }
     }
+    wblogf("created server connection:%d", serverSd);
 
     if (isTunnel) {
         wblogf("send tunnel established\n");
@@ -355,7 +355,7 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         exit(0);
     } else {
         if (strlen(header) && !isTunnel) {
-            wblogf("send header\n");
+            wblogf("send header:%s\n", header);
             capture(header);
             wbsend(serverSd, header, strlen(header), 0);
         }
