@@ -253,7 +253,7 @@ void readHeader(int sd, char *header, int size) {
             exit(-1);
         }
         
-        cnt = recv(sd, &ch, 1, 0);
+        cnt = wbrecv(sd, &ch, 1, 0);
         if (cnt > 0) {
             *p = ch;
 
@@ -277,6 +277,12 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     wblogf("client: %s, %d\n", inet_ntoa(addr.sin_addr), addr.sin_port); 
 
     wblogf("create connection to server\n");
+    if (serverPort) {
+        endir = to;
+    } else {
+        endir = from;
+    }
+
     int isTunnel;
     char header[MAX_HEADER_SIZE];
     int serverSd;
@@ -333,12 +339,6 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         kill(getppid(), SIGKILL);
         exit(0);
     } else {
-        if (serverPort) {
-            endir = to;
-        } else {
-            endir = from;
-        }
-
         wblogf("parent transpond s to c\n");
         transpond(serverSd, clientSd);
         wblogf("server socket closed, kill child process to close client socket\n");
