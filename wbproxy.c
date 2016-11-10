@@ -39,7 +39,8 @@ char * wbencrypt(char *msg, const char *key) {
     int len = strlen(msg);
     int keyLen = strlen(key);
     char *enMsg = malloc(len);
-    for (int i = 0; i < len; i++) {
+    int i;
+    for (i = 0; i < len; i++) {
         enMsg[i] = msg[i] ^ key[i % keyLen];
     }
     return enMsg;
