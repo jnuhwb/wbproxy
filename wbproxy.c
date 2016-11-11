@@ -250,7 +250,8 @@ int createConnection(char *host, int port) {
     struct sockaddr_in addr;
 
     if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        return -1;
+        wblogf("create connection error socket():%d", sd);
+        return sd;
     }
 
     memset(&addr, 0, sizeof(addr));
@@ -259,7 +260,8 @@ int createConnection(char *host, int port) {
     memcpy(&addr.sin_addr, ht->h_addr_list[0], ht->h_length);
 
     if (connect(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        return -1;
+        wblogf("create connection error connect():%d", errno);
+        return errno;
     }
 
     return sd;
@@ -310,11 +312,10 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
     memset(header, 0, MAX_HEADER_SIZE);
     int serverSd;
     if (serverPort) {
-        wblogf("create connection to my server\n");
+        wblogf("create connection to my server");
         serverSd = createConnection(serverHost, serverPort);
         
         if (serverSd < 0) {
-            wblogf("create error\n");   
             exit(-1);
         }
     } else {
@@ -325,11 +326,10 @@ void handleClient(int clientSd, struct sockaddr_in addr) {
         int port;
         extractHostPort(header, host, &port, &isTunnel);
         
-        wblogf("create connection to web server\n");
+        wblogf("create connection to web server");   
         serverSd = createConnection(host, port);
 
         if (serverSd < 0) {
-            wblogf("create error\n");   
             exit(-1);
         }
     }
