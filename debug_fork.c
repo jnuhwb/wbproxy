@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define DEBUG_FORK
+//#define DEBUG_FORK
 
 pid_t debug_fork() {
 #ifdef DEBUG_FORK

@@ -215,7 +215,7 @@ int createConnection(char *host, int port) {
 
     if (connect(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
         wblogf("create connection error connect():%d", errno);
-        return errno;
+        return -1;
     }
 
     return sd;
