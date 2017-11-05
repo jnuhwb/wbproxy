@@ -25,7 +25,13 @@ void wblog(char *s) {
     strftime(day, 128, "%Y-%m-%d", ti);
     strftime(daytime, 128, "%Y-%m-%d %H:%M:%S", ti);
 
+    printf("[pid:%d] %s %s\n", getpid(), daytime, s);
+
+#ifdef WIN32
+    mkdir("log");
+#else
     mkdir("log", S_IRWXU);
+#endif
 
     char logPath[LOG_MAX_PATH_SIZE];
     memset(logPath, 0, LOG_MAX_PATH_SIZE);
@@ -43,7 +49,6 @@ void wblog(char *s) {
     fflush(f);
     fclose(f);
 
-    printf("[pid:%d] %s %s\n", getpid(), daytime, s);
 }
 
 void wblogf(char *format, ...) {
