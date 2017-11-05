@@ -1,9 +1,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <signal.h>
-#include <netdb.h>
 #include <errno.h>
-#include <arpa/inet.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -12,27 +10,58 @@
 #include "debug_fork.h"
 #include "wblog.h"
 
-typedef enum endirection {
-    to,
-    from
-} endirection;
+#ifdef WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+
+#define EWOULDBLOCK WSAEWOULDBLOCK
+#define SIGKILL -1
+
+#else
+
+#include <netdb.h>
+include <arpa/inet.h>
+
+#endif
 
 #define MAX_HEADER_SIZE (8192)
 #define BUF_SIZE (8192)
 #define MAX_HOST_SIZE (128)
 #define MAX_PATH_SIZE (128)
 
+typedef struct Option
+{
+	int daemon;
+	int localPort;
+	int serverPort;
+	char serverHost[MAX_HOST_SIZE];
+	bool isCapture;
+	char capturePath[MAX_PATH_SIZE];
+	bool isEncrypt;
+} Option;
+
+typedef struct AcceptTreadParam
+{
+	struct sockaddr_in addr;
+	int sd;	
+} AcceptThreadParam;
+
+typedef struct TranspondThreadParam
+{
+	int clientSd;
+	int serverSd;
+} TranspondThreadParam;
+
+typedef enum endirection {
+    To,
+    From
+} endirection;
+
+//global
 char enKey[] = "h";
-
-int localPort;
-int serverPort;
-char serverHost[MAX_HOST_SIZE];
-int isCapture;
-char capturePath[MAX_PATH_SIZE];
-
-int isEncrypt;
+Option myopt;	
 endirection endir;
-
 
 void printBits(size_t const size, void const * const ptr)
 {
@@ -60,8 +89,8 @@ void wbxor(const void *msg, size_t len, void *dst, size_t dstLen, const char *ke
     }
 }
 
-ssize_t wbsend(int socket, const void *buffer, size_t length, int flags) {
-    if (isEncrypt && to == endir) {
+ssize_t wbsend(int socket, const void *buffer, size_t length, int flags, bool en) {
+    if (myopt.isEncrypt && en) {
         void *p = malloc(length);
         wbxor(buffer, length, p, length, enKey);
         int cnt = send(socket, p, length, flags);
@@ -72,8 +101,8 @@ ssize_t wbsend(int socket, const void *buffer, size_t length, int flags) {
     }
 }
 
-ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
-    if (isEncrypt && from == endir) {
+ssize_t wbrecv(int socket, void *buffer, size_t length, int flags, bool de) {
+    if (myopt.isEncrypt && de) {
         int cnt;
         cnt = recv(socket, buffer, length, flags);       
 
@@ -91,7 +120,7 @@ ssize_t wbrecv(int socket, void *buffer, size_t length, int flags) {
 
 
 void capture(char *format, ...) {
-    if (!isCapture && !strlen(capturePath)) return;
+    if (!myopt.isCapture && !strlen(myopt.capturePath)) return;
 
     char buf[BUF_SIZE];
     memset(buf, 0, BUF_SIZE);
@@ -101,8 +130,8 @@ void capture(char *format, ...) {
     vsnprintf(buf, BUF_SIZE, format, args);
     va_end(args);
 
-    if (strlen(capturePath)) {
-        FILE *f = fopen(capturePath, "a+");
+    if (strlen(myopt.capturePath)) {
+        FILE *f = fopen(myopt.capturePath, "a+");
         if (!f) {
             printf("open capture file error\n");
             return;
@@ -117,14 +146,14 @@ void capture(char *format, ...) {
     }
 }
 
-void transpond(int fromSd, int toSd) {
+void transpond(int fromSd, int toSd, bool enSend) {
     char buf[BUF_SIZE];
     int cnt;
     while (1) {
         memset(buf, 0, BUF_SIZE);
-        cnt = wbrecv(fromSd, buf, BUF_SIZE, 0);
+        cnt = wbrecv(fromSd, buf, BUF_SIZE, 0, !enSend);
         if (cnt > 0) {
-            wbsend(toSd, buf, cnt, 0);
+            wbsend(toSd, buf, cnt, 0, enSend);
             buf[cnt] = '\0';
             wblogf("from %d recv: cnt=%d %s", fromSd,  cnt, buf);
             capture(buf);
@@ -231,7 +260,7 @@ void readHeader(int sd, char *header, int size) {
             exit(-1);
         }
         
-        cnt = wbrecv(sd, &ch, 1, 0);
+        cnt = wbrecv(sd, &ch, 1, 0, true);
         if (cnt > 0) {
             *p = ch;
 
@@ -252,99 +281,124 @@ void readHeader(int sd, char *header, int size) {
     wblogf("readHeader ok:\n%s", header);
 }
 
-void handleClient(int clientSd, struct sockaddr_in addr) {
-    wblogf("client:%d, %s, %d", clientSd, inet_ntoa(addr.sin_addr), addr.sin_port);
+#ifdef WIN32
+DWORD WINAPI transpondThread(LPVOID lpParam)
+{
+	TranspondThreadParam *p = (TranspondThreadParam *)lpParam;
+	transpond(p->serverSd, p->clientSd, myopt.serverPort ? false : true);
+}
+#endif
 
-    if (serverPort) {
-        endir = to;
-    } else {
-        endir = from;
-    }
+void dualTranspond(int clientSd, int serverSd)
+{
+	transpond(clientSd, serverSd, myopt.serverPort ? true : false);
+	
+#ifdef WIN32
+	TranspondThreadParam p;
+	p.clientSd = clientSd;
+	p.serverSd = serverSd;
+	CreateThread(NULL, 0, transpondThread, &p, 0, NULL);
+#else
+	//TODO linux
+#endif
+}
 
-    int isTunnel;
+void cHandleAccept(int clientSd, struct sockaddr_in addr)
+{
+	wblogf("create connection to my server: %s %d", myopt.serverHost, myopt.serverPort);
+	int serverSd = createConnection(myopt.serverHost, myopt.serverPort);
+
+	if (serverSd < 0) {
+		wblogf("cHandleAccept creat connection failed:%d", serverSd);
+	} else {
+		wblogf("created server connection:%d", serverSd);
+		dualTranspond(clientSd, serverSd);
+	}
+}
+
+void sHandleAccept(int clientSd, struct sockaddr_in addr)
+{
+    wblogf("begin read header");
     char header[MAX_HEADER_SIZE];
     memset(header, 0, MAX_HEADER_SIZE);
-    int serverSd;
-    if (serverPort) {
-        wblogf("create connection to my server: %s %d", serverHost, serverPort);
-        serverSd = createConnection(serverHost, serverPort);
-        
-        if (serverSd < 0) {
-            exit(-1);
-        }
-    } else {
-        wblogf("begin read header");
-        readHeader(clientSd, header, MAX_HEADER_SIZE);
+    readHeader(clientSd, header, MAX_HEADER_SIZE);
+    capture(header);
 
-        char host[MAX_HOST_SIZE];
-        int port;
+    char host[MAX_HOST_SIZE];
+    int port;
+    int isTunnel;
         extractHostPort(header, host, &port, &isTunnel);
-        
-        wblogf("create connection to web server: %s %d", host, port);
-        serverSd = createConnection(host, port);
-
-        if (serverSd < 0) {
-            exit(-1);
-        }
-    }
-    wblogf("created server connection:%d", serverSd);
-
-    pid_t pid = debug_fork();
-    if (pid < 0) {
-        exit(-1);
-    } else if (0 == pid) {
-        if (serverPort) {
-            endir = from;
-        } else {
-            endir = to;
-        }
-
         if (isTunnel) {
             wblogf("send tunnel established");
             char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
             int cnt;
-            if ((cnt = wbsend(clientSd, respond, strlen(respond), 0)) < 0) {
+            if ((cnt = wbsend(clientSd, respond, strlen(respond), 0, true)) < 0) {
                 wblogf("send tunnel establish error");
                 exit(-1);   
             }
         }
         
-        wblogf("transpond s to c");
-        transpond(serverSd, clientSd);
-        wblogf("server socket closed, kill parent process to close client socket");
-        kill(getppid(), SIGKILL);
-        exit(0);
-    } else {
-        if (strlen(header) && !isTunnel) {
+        wblogf("create connection to web server: %s %d", host, port);
+        int serverSd = createConnection(host, port);
+
+        if (serverSd < 0) {
+			wblogf("sHandleAccept creat connection failed:%d", serverSd);
+        } else {
             wblogf("send header:%s", header);
-            capture(header);
-            wbsend(serverSd, header, strlen(header), 0);
-        }
-        wblogf("transpond c to s");
-        transpond(clientSd, serverSd);   
-        wblogf("client socket closed, kill child process to close server socket");
-        kill(pid, SIGKILL);
-    }
+            wbsend(serverSd, header, strlen(header), 0, false);
+
+			wblogf("created server connection:%d", serverSd);
+			dualTranspond(clientSd, serverSd);
+		}
 }
 
-void start() {
-    int sd;
-    struct sockaddr_in addr;
+void handleAccept(int clientSd, struct sockaddr_in addr) {
+	if (myopt.serverPort) {
+		cHandleAccept(clientSd, addr);
+	} else {
+		sHandleAccept(clientSd, addr);
+	}
+}
 
+#ifdef WIN32
+DWORD WINAPI acceptThread(LPVOID lpParam)
+{
+	AcceptThreadParam *p = (AcceptThreadParam *)lpParam;
+	handleAccept(p->sd, p->addr);
+}
+#endif
+
+void start() {
+#ifdef WIN32
+	WSADATA wsaData;
+	WORD sv = MAKEWORD(2, 0);
+	if (WSAStartup(sv, &wsaData) != 0) 
+	{
+		wblogf("init socket dll error!");
+		exit(1);
+	}
+#endif
+
+    int sd;
     if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        wblogf("socket() error");
+        wblogf("socket() error: %d", sd);
         exit(1);
     }
 
     int opt = 1;
+#ifdef WIN32
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0) {
+#else
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+#endif
         wblogf("setsockopt error");
         exit(1);
     }
 
+    struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(localPort);
+    addr.sin_port = htons(myopt.localPort);
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
@@ -357,13 +411,25 @@ void start() {
         exit(1);
     }
     
-    wblogf("server started");
+    wblogf("server started, listen on port: %d", myopt.localPort);
     int len;
     while (1) {
         struct sockaddr_in clientAddr;
-        socklen_t clientAddrLen;
+        socklen_t clientAddrLen = sizeof(clientAddr);
         int clientSd = accept(sd, (struct sockaddr*)&clientAddr, &clientAddrLen);
+		if (SOCKET_ERROR == clientSd) 
+		{
+			wblogf("accept failed: %d", clientSd);
+			break;
+		}
+    	wblogf("client:%d, %s, %d", clientSd, inet_ntoa(clientAddr.sin_addr), clientAddr.sin_port);
 
+#ifdef WIN32
+		AcceptThreadParam p;
+		p.addr = clientAddr;
+		p.sd = clientSd;
+		HANDLE handle = CreateThread(NULL, 0, acceptThread, &p, 0, NULL);
+#else
         pid_t pid = debug_fork();
         if (pid < 0) {
             wblogf("fork error");
@@ -375,11 +441,8 @@ void start() {
         } else {
             close(clientSd);
         }
-    }
-}
-
-void sigchld_handler() {
-    while (waitpid(-1, NULL, WNOHANG) > 0);
+#endif
+	}
 }
 
 void usage() {
@@ -392,51 +455,11 @@ void usage() {
     printf(" -e enable encode/decode\n");
 }
 
-int main(int argc, char *argv[]) {
-	int opt;
-    bool daemon = false;
-    char *ch = NULL;
-	while ((opt = getopt(argc, argv, ":dcew:p:h:l:")) != -1) {
-		switch (opt) {
-			case 'd':
-                daemon = true;
-				break;
-			case 'p':
-                localPort = atoi(optarg);
-                break;
-            case 'h':
-                ch = strchr(optarg, ':');
-                if (ch) {
-                    strncpy(serverHost, optarg, ch - optarg);
-                    serverPort = atoi(ch + 1);
-                } else {
-                    strcpy(serverHost, optarg);
-                    serverPort = 80;
-                }
-                break;
-            case 'c':
-                isCapture = 1;
-                break;
-            case 'w':
-                memset(capturePath, 0, MAX_PATH_SIZE);
-                strcpy(capturePath, optarg);
-                break;
-            case 'e':
-                isEncrypt = 1;
-                break;
-                
-            default:
-                usage();
-                exit(1);
-		}
-	}
-
-    if (!localPort) {
-        printf("please appoint local port\n\n");
-        usage();
-        exit(1);
-    }
-
+void startServer()
+{
+#ifdef WIN32
+	start();
+#else
     //signal for child process
     signal(SIGCHLD, sigchld_handler);   
 
@@ -451,4 +474,57 @@ int main(int argc, char *argv[]) {
     } else {
         start();
     }
+#endif
 }
+
+void handleOpt(int argc, char *argv[])
+{
+	int opt;
+    char *ch = NULL;
+	while ((opt = getopt(argc, argv, ":dcew:p:h:l:")) != -1) {
+		switch (opt) {
+			case 'd':
+                myopt.daemon = true;
+				break;
+			case 'p':
+                myopt.localPort = atoi(optarg);
+                break;
+            case 'h':
+                ch = strchr(optarg, ':');
+                if (ch) {
+                    strncpy(myopt.serverHost, optarg, ch - optarg);
+                    myopt.serverPort = atoi(ch + 1);
+                } else {
+                    strcpy(myopt.serverHost, optarg);
+                    myopt.serverPort = 80;
+                }
+                break;
+            case 'c':
+                myopt.isCapture = 1;
+                break;
+            case 'w':
+                memset(myopt.capturePath, 0, MAX_PATH_SIZE);
+                strcpy(myopt.capturePath, optarg);
+                break;
+            case 'e':
+                myopt.isEncrypt = 1;
+                break;
+                
+            default:
+                usage();
+                exit(1);
+		}
+	}
+
+    if (!myopt.localPort) {
+        printf("please appoint local port\n\n");
+        usage();
+        exit(1);
+    }
+}
+
+int main(int argc, char *argv[]) {
+	handleOpt(argc, argv);
+	startServer();
+}
+
