@@ -63,6 +63,15 @@ char enKey[] = "h";
 Option myopt;	
 endirection endir;
 
+void closeSocket(int sd)
+{
+	wblogf("close socket: %d", sd);
+#ifdef WIN32
+	closesocket(sd);
+#else
+#endif
+}
+
 void printBits(size_t const size, void const * const ptr)
 {
     unsigned char *b = (unsigned char*) ptr;
@@ -105,13 +114,15 @@ ssize_t wbrecv(int socket, void *buffer, size_t length, int flags, bool de) {
     if (myopt.isEncrypt && de) {
         int cnt;
         cnt = recv(socket, buffer, length, flags);       
+		if (cnt > 0) {
+				void *p = malloc(cnt);
+				wbxor(buffer, cnt, p, cnt, enKey);
 
-        void *p = malloc(cnt);
-        wbxor(buffer, cnt, p, cnt, enKey);
+				memset(buffer, 0, cnt);
+				memcpy(buffer, p, cnt);
+				free(p);
+		}
 
-        memset(buffer, 0, cnt);
-        memcpy(buffer, p, cnt);
-        free(p);
         return cnt;
     } else {
         return recv(socket, buffer, length, flags);
@@ -147,6 +158,7 @@ void capture(char *format, ...) {
 }
 
 void transpond(int fromSd, int toSd, bool enSend) {
+	wblogf("transpond from %d to %d", fromSd, toSd);
     char buf[BUF_SIZE];
     int cnt;
     while (1) {
@@ -166,9 +178,9 @@ void transpond(int fromSd, int toSd, bool enSend) {
     }
 }
 
-void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
+int extractHostPort(char *header, char *host, int *port, int *isTunnel) {
     if (!header) {
-        exit(-1);
+		return -1;
     }
 
     char *tunnel = strstr(header, "CONNECT");
@@ -176,7 +188,7 @@ void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
 
     char *start = strstr(header, "Host:");
     if (!start) {
-        exit(-1);
+		return -1;
     }
     start += 5; //Host:
     start ++; //0x20
@@ -185,7 +197,7 @@ void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
     if (!end) {
         end = strchr(start, '\n');
         if (!end) {
-            exit(-1);
+			return -1;
         }
     }
 
@@ -216,6 +228,7 @@ void extractHostPort(char *header, char *host, int *port, int *isTunnel) {
         *port = atoi(tmpPort);
     }
     wblogf("extract host ok %s %d %d", host, *port, *isTunnel);
+	return 0;
 }
 
 int createConnection(char *host, int port) {
@@ -226,7 +239,7 @@ int createConnection(char *host, int port) {
     struct hostent *ht = gethostbyname(host);
     if (!ht) {
         wblogf("gethostbyname error");
-        exit(-1);
+        return -1;
     }
 
     int sd;
@@ -250,35 +263,34 @@ int createConnection(char *host, int port) {
     return sd;
 }
 
-void readHeader(int sd, char *header, int size) {
+int readHeader(int sd, char *header, int size) {
     char ch, pCh;
     int cnt;
     char *p = header;
     while (1) {
         if (p - header > size) {
             wblogf("readHeader outof size");
-            exit(-1);
+			return -1;
         }
         
-        cnt = wbrecv(sd, &ch, 1, 0, true);
+        cnt = wbrecv(sd, &ch, 1, 0, myopt.isEncrypt);
         if (cnt > 0) {
             *p = ch;
+			wblogf("===%d", ch);
 
             if (ch == '\n' && (((p - header) > 1 && *(p - 1) == '\n') || ((p - header) > 2 && *(p - 2) == '\n'))) {
-                 break;
+				return 0;
             }
             pCh = ch;
             p++;
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
-                wblogf("???????");
                 continue;
             }
-            wblogf("readHeader %d", cnt);
-            exit(-1);
+            wblogf("readHeader error %d", cnt);
+			return -1;
         }
     }
-    wblogf("readHeader ok:\n%s", header);
 }
 
 #ifdef WIN32
@@ -286,21 +298,27 @@ DWORD WINAPI transpondThread(LPVOID lpParam)
 {
 	TranspondThreadParam *p = (TranspondThreadParam *)lpParam;
 	transpond(p->serverSd, p->clientSd, myopt.serverPort ? false : true);
+	closeSocket(p->clientSd);
+	closeSocket(p->serverSd);
+	free(p);
+	p = NULL;
 }
 #endif
 
 void dualTranspond(int clientSd, int serverSd)
 {
-	transpond(clientSd, serverSd, myopt.serverPort ? true : false);
-	
+	wblogf("start dual transpond %d, %d", clientSd, serverSd);
 #ifdef WIN32
-	TranspondThreadParam p;
-	p.clientSd = clientSd;
-	p.serverSd = serverSd;
-	CreateThread(NULL, 0, transpondThread, &p, 0, NULL);
+	TranspondThreadParam *p = (TranspondThreadParam *)malloc(sizeof(TranspondThreadParam));
+	p->clientSd = clientSd;
+	p->serverSd = serverSd;
+	CreateThread(NULL, 0, transpondThread, p, 0, NULL);
 #else
 	//TODO linux
 #endif
+	transpond(clientSd, serverSd, myopt.serverPort ? true : false);
+	closeSocket(clientSd);
+	closeSocket(serverSd);
 }
 
 void cHandleAccept(int clientSd, struct sockaddr_in addr)
@@ -321,20 +339,23 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
     wblogf("begin read header");
     char header[MAX_HEADER_SIZE];
     memset(header, 0, MAX_HEADER_SIZE);
-    readHeader(clientSd, header, MAX_HEADER_SIZE);
+    if (readHeader(clientSd, header, MAX_HEADER_SIZE) < 0) {
+		wblogf("read header error");
+		return;
+	} 
+
     capture(header);
 
     char host[MAX_HOST_SIZE];
     int port;
     int isTunnel;
-        extractHostPort(header, host, &port, &isTunnel);
+    if (extractHostPort(header, host, &port, &isTunnel) >= 0) {
         if (isTunnel) {
             wblogf("send tunnel established");
             char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
             int cnt;
             if ((cnt = wbsend(clientSd, respond, strlen(respond), 0, true)) < 0) {
                 wblogf("send tunnel establish error");
-                exit(-1);   
             }
         }
         
@@ -344,12 +365,16 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
         if (serverSd < 0) {
 			wblogf("sHandleAccept creat connection failed:%d", serverSd);
         } else {
+			wblogf("created server connection:%d", serverSd);
+
             wblogf("send header:%s", header);
             wbsend(serverSd, header, strlen(header), 0, false);
 
-			wblogf("created server connection:%d", serverSd);
 			dualTranspond(clientSd, serverSd);
 		}
+	} else {
+		wblogf("extractHostPort error");
+	}
 }
 
 void handleAccept(int clientSd, struct sockaddr_in addr) {
@@ -365,6 +390,8 @@ DWORD WINAPI acceptThread(LPVOID lpParam)
 {
 	AcceptThreadParam *p = (AcceptThreadParam *)lpParam;
 	handleAccept(p->sd, p->addr);
+	free(p);
+	p = NULL;
 }
 #endif
 
@@ -420,15 +447,15 @@ void start() {
 		if (SOCKET_ERROR == clientSd) 
 		{
 			wblogf("accept failed: %d", clientSd);
-			break;
+			continue;
 		}
     	wblogf("client:%d, %s, %d", clientSd, inet_ntoa(clientAddr.sin_addr), clientAddr.sin_port);
 
 #ifdef WIN32
-		AcceptThreadParam p;
-		p.addr = clientAddr;
-		p.sd = clientSd;
-		HANDLE handle = CreateThread(NULL, 0, acceptThread, &p, 0, NULL);
+		AcceptThreadParam *p = (AcceptThreadParam *)malloc(sizeof(AcceptThreadParam));
+		p->addr = clientAddr;
+		p->sd = clientSd;
+		HANDLE handle = CreateThread(NULL, 0, acceptThread, p, 0, NULL);
 #else
         pid_t pid = debug_fork();
         if (pid < 0) {
