@@ -276,7 +276,6 @@ int readHeader(int sd, char *header, int size) {
         cnt = wbrecv(sd, &ch, 1, 0, myopt.isEncrypt);
         if (cnt > 0) {
             *p = ch;
-			wblogf("===%d", ch);
 
             if (ch == '\n' && (((p - header) > 1 && *(p - 1) == '\n') || ((p - header) > 2 && *(p - 2) == '\n'))) {
 				return 0;
@@ -367,8 +366,10 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
         } else {
 			wblogf("created server connection:%d", serverSd);
 
-            wblogf("send header:%s", header);
-            wbsend(serverSd, header, strlen(header), 0, false);
+			if (!isTunnel) {
+            	wblogf("send header:%s", header);
+	            wbsend(serverSd, header, strlen(header), 0, false);
+			}
 
 			dualTranspond(clientSd, serverSd);
 		}
