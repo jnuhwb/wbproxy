@@ -17,12 +17,12 @@
 
 #define EWOULDBLOCK WSAEWOULDBLOCK
 #define SIGKILL -1
-
 #else
-
 #include <netdb.h>
-include <arpa/inet.h>
+#include <arpa/inet.h>
+#include <pthread.h>
 
+#define SOCKET_ERROR -1
 #endif
 
 #define MAX_HEADER_SIZE (8192)
@@ -69,6 +69,7 @@ void closeSocket(int sd)
 #ifdef WIN32
 	closesocket(sd);
 #else
+	close(sd);
 #endif
 }
 
@@ -294,6 +295,9 @@ int readHeader(int sd, char *header, int size) {
 
 #ifdef WIN32
 DWORD WINAPI transpondThread(LPVOID lpParam)
+#else
+void *transpondThread(void *lpParam)
+#endif
 {
 	TranspondThreadParam *p = (TranspondThreadParam *)lpParam;
 	transpond(p->serverSd, p->clientSd, myopt.serverPort ? false : true);
@@ -302,18 +306,20 @@ DWORD WINAPI transpondThread(LPVOID lpParam)
 	free(p);
 	p = NULL;
 }
-#endif
 
 void dualTranspond(int clientSd, int serverSd)
 {
 	wblogf("start dual transpond %d, %d", clientSd, serverSd);
-#ifdef WIN32
 	TranspondThreadParam *p = (TranspondThreadParam *)malloc(sizeof(TranspondThreadParam));
 	p->clientSd = clientSd;
 	p->serverSd = serverSd;
+#ifdef WIN32
 	CreateThread(NULL, 0, transpondThread, p, 0, NULL);
 #else
-	//TODO linux
+	pthread_t pid;
+	if (pthread_create(&pid, NULL, transpondThread, p) != 0) {
+		wblogf("dualTranspond pthread_create failed");	
+	}
 #endif
 	transpond(clientSd, serverSd, myopt.serverPort ? true : false);
 	closeSocket(clientSd);
@@ -388,13 +394,15 @@ void handleAccept(int clientSd, struct sockaddr_in addr) {
 
 #ifdef WIN32
 DWORD WINAPI acceptThread(LPVOID lpParam)
+#else
+void *acceptThread(void *lpParam)
+#endif
 {
 	AcceptThreadParam *p = (AcceptThreadParam *)lpParam;
 	handleAccept(p->sd, p->addr);
 	free(p);
 	p = NULL;
 }
-#endif
 
 void start() {
 #ifdef WIN32
@@ -452,23 +460,16 @@ void start() {
 		}
     	wblogf("client:%d, %s, %d", clientSd, inet_ntoa(clientAddr.sin_addr), clientAddr.sin_port);
 
-#ifdef WIN32
 		AcceptThreadParam *p = (AcceptThreadParam *)malloc(sizeof(AcceptThreadParam));
 		p->addr = clientAddr;
 		p->sd = clientSd;
+#ifdef WIN32
 		HANDLE handle = CreateThread(NULL, 0, acceptThread, p, 0, NULL);
 #else
-        pid_t pid = debug_fork();
-        if (pid < 0) {
-            wblogf("fork error");
-            exit(1);
-        } else if (0 == pid) {
-            close(sd);
-            handleClient(clientSd, clientAddr);
-            exit(0);
-        } else {
-            close(clientSd);
-        }
+		pthread_t pid;
+		if (pthread_create(&pid, NULL, acceptThread, p) != 0) {
+			wblogf("pthread_create failed");
+		}
 #endif
 	}
 }
@@ -481,28 +482,6 @@ void usage() {
     printf(" -c capture http data\n");
     printf(" -w capture redirect to file\n");
     printf(" -e enable encode/decode\n");
-}
-
-void startServer()
-{
-#ifdef WIN32
-	start();
-#else
-    //signal for child process
-    signal(SIGCHLD, sigchld_handler);   
-
-    if (daemon) {
-        pid_t pid = debug_fork();
-        if (pid < 0) {
-            printf("Could not daemon!\n");
-            exit(1);
-        } else if (0 == pid) {
-            start();
-        }
-    } else {
-        start();
-    }
-#endif
 }
 
 void handleOpt(int argc, char *argv[])
@@ -553,6 +532,5 @@ void handleOpt(int argc, char *argv[])
 
 int main(int argc, char *argv[]) {
 	handleOpt(argc, argv);
-	startServer();
+	start();
 }
-
