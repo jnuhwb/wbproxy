@@ -530,7 +530,29 @@ void handleOpt(int argc, char *argv[])
     }
 }
 
+void sigchld_handler() {
+    while (waitpid(-1, NULL, WNOHANG) > 0);
+}
+
 int main(int argc, char *argv[]) {
 	handleOpt(argc, argv);
-	start();
+    if (myopt.daemon) {
+#ifdef WIN32
+#else
+		wblogf("daemon");
+
+    	//signal for child process
+    	signal(SIGCHLD, sigchld_handler);   
+        
+		pid_t pid = fork();
+        if (pid < 0) {
+            printf("Could not daemon!\n");
+            exit(1);
+        } else if (0 == pid) {
+            start();
+        }
+#endif
+    } else {
+        start();
+    }
 }
