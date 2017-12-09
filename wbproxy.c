@@ -529,10 +529,11 @@ void handleOpt(int argc, char *argv[])
         exit(1);
     }
 }
-
+#ifndef WIN32
 void sigchld_handler() {
     while (waitpid(-1, NULL, WNOHANG) > 0);
 }
+#endif
 
 int main(int argc, char *argv[]) {
 	handleOpt(argc, argv);
