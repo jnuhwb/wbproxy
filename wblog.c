@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <sys/errno.h>
 
 #define LOG_BUF_SIZE (8192)
 #define LOG_MAX_PATH_SIZE (128)
@@ -30,12 +31,16 @@ void wblog(char *s) {
 #ifdef WIN32
     mkdir("log");
 #else
-    mkdir("log", S_IRWXU);
+    if (access("log", F_OK) == -1) {//directory's not exist
+        if (mkdir("log", S_IRWXU) != 0) {
+            printf("make log directory error! errno=%d\n", errno);
+        }
+    }
 #endif
 
     char logPath[LOG_MAX_PATH_SIZE];
     memset(logPath, 0, LOG_MAX_PATH_SIZE);
-    strcat(logPath, "log/");
+    strcat(logPath, "./log/");
     strcat(logPath, day);
     strcat(logPath, ".log");
 
@@ -48,7 +53,6 @@ void wblog(char *s) {
     fprintf(f, "[pid:%d] %s %s\n", getpid(), daytime, s);
     fflush(f);
     fclose(f);
-
 }
 
 void wblogf(char *format, ...) {
