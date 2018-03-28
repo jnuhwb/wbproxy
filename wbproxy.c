@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include "debug_fork.h"
 #include "wblog.h"
+#import <execinfo.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -535,8 +536,19 @@ void sigchld_handler() {
 }
 #endif
 
+void signal_handler(int sig) {
+    void *array[10];
+    size_t size;
+    size = backtrace(array, 10);
+    printf("error signal: %d\n", sig);
+    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    wblog(array);
+}
+
 int main(int argc, char *argv[]) {
-	handleOpt(argc, argv);
+	signal(SIGSEGV, signal_handler);
+
+    handleOpt(argc, argv);
     if (myopt.daemon) {
 #ifdef WIN32
 #else
