@@ -1,6 +1,6 @@
+#include <signal.h>
 #include <stdarg.h>
 #include <time.h>
-#include <signal.h>
 #include <errno.h>
 #include <string.h>
 #include <stdbool.h>
@@ -536,17 +536,21 @@ void sigchld_handler() {
 }
 #endif
 
-void signal_handler(int sig) {
+void catch_crash_signal(int sig) {
     void *array[10];
     size_t size;
     size = backtrace(array, 10);
-    printf("error signal: %d\n", sig);
+    wblogf("error signal: %d\n", sig);
     backtrace_symbols_fd(array, size, STDERR_FILENO);
     wblog(array);
 }
 
 int main(int argc, char *argv[]) {
-	signal(SIGSEGV, signal_handler);
+	signal(SIGILL, catch_crash_signal);
+    signal(SIGABRT, catch_crash_signal);
+    signal(SIGBUS, catch_crash_signal);
+    signal(SIGSEGV, catch_crash_signal);
+    signal(SIGSYS, catch_crash_signal);
 
     handleOpt(argc, argv);
     if (myopt.daemon) {
