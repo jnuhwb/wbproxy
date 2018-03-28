@@ -443,7 +443,7 @@ void start() {
         exit(1);
     }
 
-    if (listen(sd, 20) != 0) {
+    if (listen(sd, SOMAXCONN) != 0) {
         wblogf("listen error");
         exit(1);
     }
