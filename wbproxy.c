@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include "debug_fork.h"
 #include "wblog.h"
-#import <execinfo.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -22,6 +21,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#import <execinfo.h>
 
 #define SOCKET_ERROR -1
 #endif
@@ -74,22 +74,19 @@ void closeSocket(int sd)
 #endif
 }
 
-void printBits(size_t const size, void const * const ptr)
-{
-    unsigned char *b = (unsigned char*) ptr;
-        unsigned char byte;
-            int i, j;
+void printBits(size_t const size, void const *const ptr) {
+    unsigned char *b = (unsigned char *) ptr;
+    unsigned char byte;
+    int i, j;
 
-                for (i=size-1;i>=0;i--)
-                    {
-                            for (j=7;j>=0;j--)
-                                    {
-                                                byte = (b[i] >> j) & 1;
-                                                            printf("%u", byte);
-                                                                    }
-                                                                        }
-                                                                            puts("");
-                                                                            }
+    for (i = size - 1; i >= 0; i--) {
+        for (j = 7; j >= 0; j--) {
+            byte = (b[i] >> j) & 1;
+            printf("%u", byte);
+        }
+    }
+    puts("");
+}
 void wbxor(const void *msg, size_t len, void *dst, size_t dstLen, const char *key) {
     int keyLen = strlen(key);
     int i;
@@ -536,6 +533,7 @@ void sigchld_handler() {
 }
 #endif
 
+#ifndef WIN32
 void catch_crash_signal(int sig) {
     void *array[10];
     size_t size;
@@ -544,13 +542,22 @@ void catch_crash_signal(int sig) {
     backtrace_symbols_fd(array, size, STDERR_FILENO);
     wblog(array);
 }
+#endif
 
-int main(int argc, char *argv[]) {
-	signal(SIGILL, catch_crash_signal);
+#ifndef WIN32
+void setup_signal() {
+    signal(SIGILL, catch_crash_signal);
     signal(SIGABRT, catch_crash_signal);
     signal(SIGBUS, catch_crash_signal);
     signal(SIGSEGV, catch_crash_signal);
     signal(SIGSYS, catch_crash_signal);
+}
+#endif
+
+int main(int argc, char *argv[]) {
+#ifndef WIN32
+    setup_signal();
+#endif
 
     handleOpt(argc, argv);
     if (myopt.daemon) {

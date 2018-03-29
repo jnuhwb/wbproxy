@@ -10,7 +10,10 @@
 #include <string.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+
+#ifndef WIN32
 #include <sys/errno.h>
+#endif
 
 #define LOG_BUF_SIZE (8192)
 #define LOG_MAX_PATH_SIZE (128)
@@ -26,7 +29,7 @@ void wblog(char *s) {
     strftime(day, 128, "%Y-%m-%d", ti);
     strftime(daytime, 128, "%Y-%m-%d %H:%M:%S", ti);
 
-    printf("[pid:%d] %s %s\n", getpid(), daytime, s);
+    //printf("[pid:%d] %s %s\n", getpid(), daytime, s);
 
 #ifdef WIN32
     mkdir("log");
