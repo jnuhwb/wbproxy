@@ -168,9 +168,7 @@ void transpond(int fromSd, int toSd, bool enSend) {
         cnt = wbrecv(fromSd, buf, BUF_SIZE, 0, !enSend);
         if (cnt > 0) {
             wbsend(toSd, buf, cnt, 0, enSend);
-            buf[cnt] = '\0';
-            wblogf("from %d recv: cnt=%d %s", fromSd,  cnt, buf);
-            capture(buf);
+            wblogf("from %d recv: cnt=%d", fromSd,  cnt);
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
