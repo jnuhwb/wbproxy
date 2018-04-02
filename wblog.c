@@ -29,7 +29,7 @@ void wblog(char *s) {
     strftime(day, 128, "%Y-%m-%d", ti);
     strftime(daytime, 128, "%Y-%m-%d %H:%M:%S", ti);
 
-    //printf("[pid:%d] %s %s\n", getpid(), daytime, s);
+    printf("[pid:%d] %s %s\n", getpid(), daytime, s);
 
 #ifdef WIN32
     mkdir("log");
