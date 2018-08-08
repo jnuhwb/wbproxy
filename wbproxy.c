@@ -164,8 +164,9 @@ void transpond(int fromSd, int toSd, bool enSend) {
         memset(buf, 0, BUF_SIZE);
         cnt = wbrecv(fromSd, buf, BUF_SIZE, 0, !enSend);
         if (cnt > 0) {
-            wbsend(toSd, buf, cnt, 0, enSend);
             wblogf("from %d recv: cnt=%d", fromSd,  cnt);
+            ssize_t scnt = wbsend(toSd, buf, cnt, 0, enSend);
+            wblogf("send to %d: cnt=%d", toSd,  scnt);
         } else {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
@@ -235,7 +236,7 @@ int createConnection(char *host, int port) {
 
     struct hostent *ht = gethostbyname(host);
     if (!ht) {
-        wblogf("gethostbyname error");
+        wbloglf(LogLevelError, "gethostbyname error");
         return -1;
     }
 
@@ -243,7 +244,7 @@ int createConnection(char *host, int port) {
     struct sockaddr_in addr;
 
     if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        wblogf("create connection error socket():%d", sd);
+        wbloglf(LogLevelError, "create connection error socket():%d", sd);
         return sd;
     }
 
@@ -253,7 +254,7 @@ int createConnection(char *host, int port) {
     memcpy(&addr.sin_addr, ht->h_addr_list[0], ht->h_length);
 
     if (connect(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        wblogf("create connection error connect():%d", errno);
+        wbloglf(LogLevelError, "create connection error connect():%d", errno);
         return -1;
     }
 
@@ -266,7 +267,7 @@ int readHeader(int sd, char *header, int size) {
     char *p = header;
     while (1) {
         if (p - header > size) {
-            wblogf("readHeader outof size");
+            wbloglf(LogLevelError, "readHeader outof size");
 			return -1;
         }
         
@@ -283,7 +284,7 @@ int readHeader(int sd, char *header, int size) {
             if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
                 continue;
             }
-            wblogf("readHeader error %d", cnt);
+            wbloglf(LogLevelError, "readHeader error %d", cnt);
 			return -1;
         }
     }
@@ -314,7 +315,7 @@ void dualTranspond(int clientSd, int serverSd)
 #else
 	pthread_t pid;
 	if (pthread_create(&pid, NULL, transpondThread, p) != 0) {
-		wblogf("dualTranspond pthread_create failed");	
+		wbloglf(LogLevelError, "dualTranspond pthread_create failed");
 	}
 #endif
 	transpond(clientSd, serverSd, myopt.serverPort ? true : false);
@@ -328,7 +329,7 @@ void cHandleAccept(int clientSd, struct sockaddr_in addr)
 	int serverSd = createConnection(myopt.serverHost, myopt.serverPort);
 
 	if (serverSd < 0) {
-		wblogf("cHandleAccept creat connection failed:%d", serverSd);
+		wbloglf(LogLevelError, "cHandleAccept creat connection failed:%d", serverSd);
 	} else {
 		wblogf("created server connection:%d", serverSd);
 		dualTranspond(clientSd, serverSd);
@@ -341,7 +342,7 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
     char header[MAX_HEADER_SIZE];
     memset(header, 0, MAX_HEADER_SIZE);
     if (readHeader(clientSd, header, MAX_HEADER_SIZE) < 0) {
-		wblogf("read header error");
+		wbloglf(LogLevelError, "read header error");
 		return;
 	} 
 
@@ -356,7 +357,7 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
             char *respond = "HTTP/1.1 200 Connection Established\r\n\r\n";
             int cnt;
             if ((cnt = wbsend(clientSd, respond, strlen(respond), 0, true)) < 0) {
-                wblogf("send tunnel establish error");
+                wbloglf(LogLevelError, "send tunnel establish error");
             }
         }
         
@@ -364,7 +365,7 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
         int serverSd = createConnection(host, port);
 
         if (serverSd < 0) {
-			wblogf("sHandleAccept creat connection failed:%d", serverSd);
+			wbloglf(LogLevelError, "sHandleAccept creat connection failed:%d", serverSd);
         } else {
 			wblogf("created server connection:%d", serverSd);
 
@@ -376,7 +377,7 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
 			dualTranspond(clientSd, serverSd);
 		}
 	} else {
-		wblogf("extractHostPort error");
+		wbloglf(LogLevelError, "extractHostPort error");
 	}
 }
 
@@ -406,14 +407,14 @@ void start() {
 	WORD sv = MAKEWORD(2, 0);
 	if (WSAStartup(sv, &wsaData) != 0) 
 	{
-		wblogf("init socket dll error!");
+		wbloglf(LogLevelError, "init socket dll error!");
 		exit(1);
 	}
 #endif
 
     int sd;
     if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        wblogf("socket() error: %d", sd);
+        wbloglf(LogLevelError, "socket() error: %d", sd);
         exit(1);
     }
 
@@ -423,7 +424,7 @@ void start() {
 #else
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
-        wblogf("setsockopt error");
+        wbloglf(LogLevelError, "setsockopt error");
         exit(1);
     }
 
@@ -434,12 +435,12 @@ void start() {
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        wblogf("bind error");
+        wbloglf(LogLevelError, "bind error");
         exit(1);
     }
 
     if (listen(sd, SOMAXCONN) != 0) {
-        wblogf("listen error");
+        wbloglf(LogLevelError, "listen error");
         exit(1);
     }
     
@@ -451,7 +452,7 @@ void start() {
         int clientSd = accept(sd, (struct sockaddr*)&clientAddr, &clientAddrLen);
 		if (SOCKET_ERROR == clientSd) 
 		{
-			wblogf("accept failed: %d", clientSd);
+			wbloglf(LogLevelError, "accept failed: %d", errno);
 			continue;
 		}
     	wblogf("client:%d, %s, %d", clientSd, inet_ntoa(clientAddr.sin_addr), clientAddr.sin_port);
@@ -464,7 +465,7 @@ void start() {
 #else
 		pthread_t pid;
 		if (pthread_create(&pid, NULL, acceptThread, p) != 0) {
-			wblogf("pthread_create failed");
+			wbloglf(LogLevelError, "pthread_create failed");
 		}
 #endif
 	}
@@ -536,7 +537,7 @@ void catch_crash_signal(int sig) {
     void *array[10];
     size_t size;
     size = backtrace(array, 10);
-    wblogf("error signal: %d\n", sig);
+    wbloglf(LogLevelError, "error signal: %d\n", sig);
     backtrace_symbols_fd(array, size, STDERR_FILENO);
     wblog(array);
 }
@@ -553,6 +554,8 @@ void setup_signal() {
 #endif
 
 int main(int argc, char *argv[]) {
+
+    wblogInitContext();
 #ifndef WIN32
     setup_signal();
 #endif
@@ -577,4 +580,5 @@ int main(int argc, char *argv[]) {
     } else {
         start();
     }
+    wblogDestroyContext();
 }
