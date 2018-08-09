@@ -168,8 +168,13 @@ void transpond(int fromSd, int toSd, bool enSend) {
             ssize_t scnt = wbsend(toSd, buf, cnt, 0, enSend);
             wblogf("send to %d: cnt=%d", toSd,  scnt);
         } else {
-            if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
+            if ((cnt < 0) && EINTR == errno || EWOULDBLOCK == errno || EAGAIN == errno) {
                 continue;
+            }
+            if (cnt < 0) {
+                wblogf("error: %d transpond from %d to %d", errno, fromSd, toSd);
+            } else {
+                wblogf("finish transpond from %d to %d", fromSd, toSd);
             }
             break;
         }
@@ -422,6 +427,11 @@ void start() {
 #ifdef WIN32
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0) {
 #else
+    unsigned sndopt;
+    unsigned rcvopt;
+    getsockopt(sd, SOL_SOCKET, SO_SNDBUF, &sndopt, sizeof(sndopt));
+    getsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvopt, sizeof(rcvopt));
+    wblogf("sndbuf:%ld, rcv:%ld", sndopt, rcvopt);
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
         wbloglf(LogLevelError, "setsockopt error");
