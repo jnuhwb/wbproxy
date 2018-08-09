@@ -433,11 +433,11 @@ void start() {
 #else
     unsigned sndopt;
     if (getsockopt(sd, SOL_SOCKET, SO_SNDBUF, &sndopt, sizeof(sndopt)) < 0) {
-        wbloglf("getsockopt SO_SNDBUF error:%d", errno);
+        wbloglf(LogLevelError, "getsockopt SO_SNDBUF error:%d", errno);
     }
     unsigned rcvopt;
     if (getsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvopt, sizeof(rcvopt)) < 0) {
-        wbloglf("getsockopt SO_RCVBUF error:%d", errno);
+        wbloglf(LogLevelError, "getsockopt SO_RCVBUF error:%d", errno);
     }
     wblogf("sndbuf:%ld, rcv:%ld", sndopt, rcvopt);
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
