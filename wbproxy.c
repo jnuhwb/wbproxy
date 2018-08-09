@@ -168,11 +168,11 @@ void transpond(int fromSd, int toSd, bool enSend) {
             ssize_t scnt = wbsend(toSd, buf, cnt, 0, enSend);
             wblogf("send to %d: cnt=%d", toSd,  scnt);
         } else {
-            if ((cnt < 0) && EINTR == errno || EWOULDBLOCK == errno || EAGAIN == errno) {
+            if ((cnt < 0) && (EINTR == errno || EWOULDBLOCK == errno || EAGAIN == errno)) {
                 continue;
             }
             if (cnt < 0) {
-                wblogf("error: %d transpond from %d to %d", errno, fromSd, toSd);
+                wbloglf(LogLevelError, "error: %d transpond from %d to %d", errno, fromSd, toSd);
             } else {
                 wblogf("finish transpond from %d to %d", fromSd, toSd);
             }
@@ -286,10 +286,14 @@ int readHeader(int sd, char *header, int size) {
             pCh = ch;
             p++;
         } else {
-            if (EINTR == cnt || EWOULDBLOCK == cnt || EAGAIN == cnt) {
+            if ((cnt < 0) && (EINTR == errno || EWOULDBLOCK == errno || EAGAIN == errno)) {
                 continue;
             }
-            wbloglf(LogLevelError, "readHeader error %d", cnt);
+            if (cnt < 0) {
+                wbloglf(LogLevelError, "readHeader error %d", errno);
+            } else {
+                wblogf("finish readHeader");
+            }
 			return -1;
         }
     }
