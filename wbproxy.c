@@ -441,9 +441,20 @@ void start() {
         wbloglf(LogLevelError, "getsockopt SO_RCVBUF error:%d", errno);
     }
     wblogf("SO_SNDBUF:%d, SO_RCVBUF:%d", sndopt, rcvopt);
+
+    int sndbufSize = 524288;
+    if (setsockopt(sd, SOL_SOCKET, SO_SNDBUF, &sndbufSize, sizeof(sndbufSize)) < 0) {
+        wbloglf(LogLevelError, "setsockopt SO_SNDBUF error:%d", errno);
+    }
+
+    int rcvbufSize = 524288;
+    if (setsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvbufSize, sizeof(rcvbufSize)) < 0) {
+        wbloglf(LogLevelError, "setsockopt SO_RCVBUF error:%d", errno);
+    }
+
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
-        wbloglf(LogLevelError, "setsockopt error");
+        wbloglf(LogLevelError, "setsockopt SO_REUSEADDR error:%d", errno);
         exit(1);
     }
 
