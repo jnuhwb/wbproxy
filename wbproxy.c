@@ -310,7 +310,6 @@ void *transpondThread(void *lpParam)
 	closeSocket(p->clientSd);
 	closeSocket(p->serverSd);
 	free(p);
-	p = NULL;
 }
 
 void dualTranspond(int clientSd, int serverSd)
@@ -431,15 +430,17 @@ void start() {
 #ifdef WIN32
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0) {
 #else
-    unsigned sndopt;
-    if (getsockopt(sd, SOL_SOCKET, SO_SNDBUF, &sndopt, sizeof(sndopt)) < 0) {
+    int sndopt;
+    unsigned int lenSndopt = sizeof(sndopt);
+    if (getsockopt(sd, SOL_SOCKET, SO_SNDBUF, &sndopt, &lenSndopt) < 0) {
         wbloglf(LogLevelError, "getsockopt SO_SNDBUF error:%d", errno);
     }
-    unsigned rcvopt;
-    if (getsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvopt, sizeof(rcvopt)) < 0) {
+    int rcvopt;
+    unsigned int lenRcvopt = sizeof(rcvopt);
+    if (getsockopt(sd, SOL_SOCKET, SO_RCVBUF, &rcvopt, &lenRcvopt) < 0) {
         wbloglf(LogLevelError, "getsockopt SO_RCVBUF error:%d", errno);
     }
-    wblogf("sndbuf:%ld, rcv:%ld", sndopt, rcvopt);
+    wblogf("SO_SNDBUF:%d, SO_RCVBUF:%d", sndopt, rcvopt);
     if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 #endif
         wbloglf(LogLevelError, "setsockopt error");
