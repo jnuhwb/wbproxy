@@ -174,7 +174,7 @@ void transpond(int fromSd, int toSd, bool enSend) {
             if (cnt < 0) {
                 wbloglf(LogLevelError, "error: %d transpond from %d to %d", errno, fromSd, toSd);
             } else {
-                wblogf("finish transpond from %d to %d", fromSd, toSd);
+                wbloglf(LogLevelError, "transpond from socket %d closed", fromSd);
             }
             break;
         }
@@ -292,7 +292,7 @@ int readHeader(int sd, char *header, int size) {
             if (cnt < 0) {
                 wbloglf(LogLevelError, "readHeader error %d", errno);
             } else {
-                wblogf("finish readHeader");
+                wblogf("readHeader socket %d closed", sd);
             }
 			return -1;
         }
@@ -307,9 +307,8 @@ void *transpondThread(void *lpParam)
 {
 	TranspondThreadParam *p = (TranspondThreadParam *)lpParam;
 	transpond(p->serverSd, p->clientSd, myopt.serverPort ? false : true);
-	closeSocket(p->clientSd);
-	closeSocket(p->serverSd);
 	free(p);
+    return 0;
 }
 
 void dualTranspond(int clientSd, int serverSd)
@@ -407,6 +406,7 @@ void *acceptThread(void *lpParam)
 	handleAccept(p->sd, p->addr);
 	free(p);
 	p = NULL;
+    return 0;
 }
 
 void start() {
@@ -569,7 +569,7 @@ void catch_crash_signal(int sig) {
     size = backtrace(array, 10);
     wbloglf(LogLevelError, "error signal: %d\n", sig);
     backtrace_symbols_fd(array, size, STDERR_FILENO);
-    wblog(array);
+    //wblog(array);
 }
 #endif
 
