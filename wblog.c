@@ -10,10 +10,10 @@
 #include <string.h>
 #include <stdarg.h>
 #include <sys/stat.h>
-#include <pthread.h>
 
 #ifndef WIN32
 #include <sys/errno.h>
+#include <pthread.h>
 #endif
 
 #define LOG_BUF_SIZE (10240)
@@ -22,14 +22,20 @@
 #define LOG_LEVEL_INFO
 #define LOG_LEVEL_ERROR
 
+#ifndef WIN32
 static pthread_mutex_t lock;
+#endif
 
 void wblogInitContext() {
+#ifndef WIN32
     pthread_mutex_init(&lock, NULL);
+#endif
 }
 
 void wblogDestroyContext() {
+#ifndef WIN32
     pthread_mutex_destroy(&lock);
+#endif
 }
 
 void wblog(char *s) {
@@ -61,7 +67,9 @@ void wblog(char *s) {
     strcat(logPath, day);
     strcat(logPath, ".log");
 
+#ifndef WIN32
     pthread_mutex_lock(&lock);
+#endif
     FILE *f = fopen(logPath, "ab+");
     if (!f) {
         printf("open log file error\n");
@@ -71,7 +79,9 @@ void wblog(char *s) {
     fprintf(f, "[pid:%d] %s %s\n", getpid(), daytime, s);
     fflush(f);
     fclose(f);
+#ifndef WIN32
     pthread_mutex_unlock(&lock);
+#endif
 }
 
 
