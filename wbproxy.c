@@ -173,8 +173,6 @@ void transpond(int fromSd, int toSd, bool enSend) {
             }
             if (cnt < 0) {
                 wbloglf(LogLevelError, "error: %d transpond from %d to %d", errno, fromSd, toSd);
-            } else {
-                wbloglf(LogLevelError, "transpond from socket %d closed", fromSd);
             }
             break;
         }
@@ -372,7 +370,7 @@ void sHandleAccept(int clientSd, struct sockaddr_in addr)
         int serverSd = createConnection(host, port);
 
         if (serverSd < 0) {
-			wbloglf(LogLevelError, "sHandleAccept creat connection failed:%d", serverSd);
+			wbloglf(LogLevelError, "sHandleAccept creat connection failed:%d", errno);
         } else {
 			wblogf("created server connection:%d", serverSd);
 
@@ -465,7 +463,7 @@ void start() {
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        wbloglf(LogLevelError, "bind error");
+        wbloglf(LogLevelError, "bind error %d", errno);
         exit(1);
     }
 
@@ -480,11 +478,16 @@ void start() {
         struct sockaddr_in clientAddr;
         socklen_t clientAddrLen = sizeof(clientAddr);
         int clientSd = accept(sd, (struct sockaddr*)&clientAddr, &clientAddrLen);
-		if (SOCKET_ERROR == clientSd) 
-		{
-			wbloglf(LogLevelError, "accept failed: %d", errno);
-			continue;
+		if (clientSd < 0) {
+            if (errno == EINTR) {
+                wblogf("accept EINTR");
+                continue;
+            } else {
+                wbloglf(LogLevelError, "accept failed: %d", errno);
+                break;
+            }
 		}
+
     	wblogf("client:%d, %s, %d", clientSd, inet_ntoa(clientAddr.sin_addr), clientAddr.sin_port);
 
 		AcceptThreadParam *p = (AcceptThreadParam *)malloc(sizeof(AcceptThreadParam));
@@ -571,21 +574,30 @@ void catch_crash_signal(int sig) {
     backtrace_symbols_fd(array, size, STDERR_FILENO);
     //wblog(array);
 }
-#endif
 
-#ifndef WIN32
+void handle_pipe(int sig)
+{
+    wbloglf(LogLevelError, "SIGPIPE");
+}
+
 void setup_signal() {
     signal(SIGILL, catch_crash_signal);
     signal(SIGABRT, catch_crash_signal);
     signal(SIGBUS, catch_crash_signal);
     signal(SIGSEGV, catch_crash_signal);
     signal(SIGSYS, catch_crash_signal);
+
+    struct sigaction action;
+    action.sa_handler = handle_pipe;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    sigaction(SIGPIPE, &action, NULL);
 }
 #endif
 
 int main(int argc, char *argv[]) {
 
-    wblogInitContext();
+//    wblogInitContext();
 #ifndef WIN32
     setup_signal();
 #endif
@@ -597,7 +609,7 @@ int main(int argc, char *argv[]) {
 		wblogf("daemon");
 
     	//signal for child process
-    	signal(SIGCHLD, sigchld_handler);   
+    	signal(SIGCHLD, sigchld_handler);
         
 		pid_t pid = fork();
         if (pid < 0) {
@@ -610,5 +622,5 @@ int main(int argc, char *argv[]) {
     } else {
         start();
     }
-    wblogDestroyContext();
+//    wblogDestroyContext();
 }
